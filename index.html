@@ -146,7 +146,8 @@
 <script>
 // === À REMPLIR ===
 const SUPABASE_URL = "https://tlkqcysrmkjhahhfjitu.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_RM91kJNsu1bJFU1IoPPxcQ_bLTxnLgZ";
+const SUPABASE_ANON_KEY = "sb_publishable_RM91kJNsu1bJFU1IoPPxcQ_bLTxnLgZ
+";
 const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1523321413862424678/kCwkNykGB7hcvwmOv0O8ZtemUFyWaWvvQoE8I4uG1TuLH8BdIIMp1M2ng5XayVPp5zl-";
 const EMAILJS_PUBLIC_KEY = "wPAUuIZWSlZ-ivT6G";
 const EMAILJS_SERVICE_ID = "service_t5vkog6";
@@ -247,19 +248,29 @@ function currentDeliveryMode(){
 function computeTotals(){
   const items = currentItems();
   const subtotal = items.reduce((sum, it) => sum + it.lineTotal, 0);
-  let discount = 0;
-  if(appliedPromo){
-    discount = appliedPromo.type === 'percent' ? subtotal * (appliedPromo.value / 100) : appliedPromo.value;
-    discount = Math.min(discount, subtotal);
-  }
   const deliveryMode = currentDeliveryMode();
-  const deliveryFee = deliveryMode === 'delivery' ? DELIVERY_FEE : 0;
-  const total = Math.max(0, subtotal - discount) + deliveryFee;
-  return { items, subtotal, discount, deliveryFee, deliveryMode, total };
+  let deliveryFee = deliveryMode === 'delivery' ? DELIVERY_FEE : 0;
+  let discount = 0;
+  let freeDeliveryApplied = false;
+
+  if(appliedPromo){
+    if(appliedPromo.minSubtotal && subtotal < appliedPromo.minSubtotal){
+      // le panier est repassé sous le seuil : le code ne s'applique plus (reste affiché comme "en attente")
+    } else if(appliedPromo.type === 'percent') discount = subtotal * (appliedPromo.value / 100);
+    else if(appliedPromo.type === 'fixed') discount = appliedPromo.value;
+    else if(appliedPromo.type === 'free_delivery' && deliveryFee > 0){
+      discount = deliveryFee;
+      freeDeliveryApplied = true;
+    }
+    discount = Math.min(discount, subtotal + deliveryFee);
+  }
+
+  const total = Math.max(0, subtotal + deliveryFee - discount);
+  return { items, subtotal, discount, deliveryFee, deliveryMode, total, freeDeliveryApplied };
 }
 
 function renderReceipt(){
-  const { items, subtotal, discount, deliveryFee, total } = computeTotals();
+  const { items, subtotal, discount, deliveryFee, total, freeDeliveryApplied } = computeTotals();
   const linesEl = document.getElementById('receiptLines');
   const totalEl = document.getElementById('receiptTotal');
   const submitBtn = document.getElementById('submitBtn');
@@ -274,9 +285,10 @@ function renderReceipt(){
       </div>`).join('');
 
   if(discount > 0){
+    const label = freeDeliveryApplied ? `Livraison offerte (${appliedPromo.code})` : `Réduction (${appliedPromo.code})`;
     html += `
       <div class="receipt-line discount">
-        <span class="label">Réduction (${appliedPromo.code})</span>
+        <span class="label">${label}</span>
         <span class="leader"></span>
         <span class="amount">-${fmt(discount)}</span>
       </div>`;
@@ -325,14 +337,41 @@ document.getElementById('promoBtn').addEventListener('click', async () => {
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
     });
     const rows = await res.json();
+    const { subtotal } = computeTotals();
+
     if(rows.length === 0){
       appliedPromo = null;
       msgEl.textContent = 'Code invalide.';
       msgEl.className = 'promo-msg err';
     } else {
-      appliedPromo = { code: rows[0].code, type: rows[0].type, value: Number(rows[0].value) };
-      msgEl.textContent = rows[0].type === 'percent' ? `-${rows[0].value}% appliqué !` : `-${fmt(Number(rows[0].value))} appliqué !`;
-      msgEl.className = 'promo-msg ok';
+      const c = rows[0];
+      const now = new Date();
+
+      if(c.expires_at && new Date(c.expires_at) < now){
+        appliedPromo = null;
+        msgEl.textContent = 'Ce code a expiré.';
+        msgEl.className = 'promo-msg err';
+      } else if(c.max_uses && c.times_used >= c.max_uses){
+        appliedPromo = null;
+        msgEl.textContent = "Ce code n'est plus disponible.";
+        msgEl.className = 'promo-msg err';
+      } else if(subtotal < Number(c.min_subtotal)){
+        appliedPromo = null;
+        const missing = Number(c.min_subtotal) - subtotal;
+        msgEl.textContent = `Ce code demande ${fmt(Number(c.min_subtotal))} d'achat minimum (il te manque ${fmt(missing)}).`;
+        msgEl.className = 'promo-msg err';
+      } else if(c.type === 'free_delivery' && currentDeliveryMode() !== 'delivery'){
+        appliedPromo = { id: c.id, code: c.code, type: c.type, value: c.value ? Number(c.value) : 0, minSubtotal: Number(c.min_subtotal) };
+        msgEl.textContent = 'Code appliqué — sélectionne "Livraison" pour en profiter.';
+        msgEl.className = 'promo-msg ok';
+      } else {
+        appliedPromo = { id: c.id, code: c.code, type: c.type, value: c.value ? Number(c.value) : 0, minSubtotal: Number(c.min_subtotal) };
+        const label = c.type === 'percent' ? `-${c.value}%`
+          : c.type === 'fixed' ? `-${fmt(Number(c.value))}`
+          : 'Livraison offerte';
+        msgEl.textContent = `${label} appliqué !`;
+        msgEl.className = 'promo-msg ok';
+      }
     }
   } catch(err){
     appliedPromo = null;
@@ -442,6 +481,21 @@ document.getElementById('modalConfirmBtn').addEventListener('click', async () =>
 
     await notifyDiscord(order);
     await sendConfirmationEmail(order);
+
+    if(appliedPromo && appliedPromo.id && discount > 0){
+      try {
+        const cRes = await fetch(`${SUPABASE_URL}/rest/v1/promo_codes?id=eq.${appliedPromo.id}&select=times_used`, {
+          headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+        });
+        const cRows = await cRes.json();
+        const current = cRows.length > 0 ? cRows[0].times_used : 0;
+        await fetch(`${SUPABASE_URL}/rest/v1/promo_codes?id=eq.${appliedPromo.id}`, {
+          method: 'PATCH',
+          headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ times_used: current + 1 })
+        });
+      } catch(err){ console.error('promo usage update failed', err); }
+    }
 
     localStorage.setItem('lastOrderAt', String(Date.now()));
 
