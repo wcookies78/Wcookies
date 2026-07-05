@@ -385,14 +385,23 @@ document.getElementById('modalCancelBtn').addEventListener('click', () => {
 });
 
 async function sendConfirmationEmail(order){
-  const lines = order.items.map(it => `${it.name} ×${it.qty} — ${fmt(it.lineTotal)}`).join('\n');
+  const orderId = Date.now().toString().slice(-6);
+  const orders = order.items.map(it => ({
+    name: it.name, units: it.qty, price: fmt(it.lineTotal)
+  }));
+  const extra_lines = [];
+  if(order.discount > 0) extra_lines.push({ label: `Réduction (${order.promo_code})`, value: `-${fmt(order.discount)}` });
+  if(order.delivery_fee > 0) extra_lines.push({ label: 'Livraison', value: fmt(order.delivery_fee) });
   const deliveryInfo = order.delivery_mode === 'delivery' ? `Livraison — ${order.address}` : 'À récupérer';
+
   try {
     await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
-      to_email: order.email,
+      order_id: orderId,
       to_name: order.buyer_name,
-      order_lines: lines,
-      total: fmt(order.total),
+      email: order.email,
+      orders,
+      extra_lines,
+      cost: { total: fmt(order.total) },
       delivery_info: deliveryInfo
     });
   } catch(err){ console.error('Email confirmation failed', err); }
