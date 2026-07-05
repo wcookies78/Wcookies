@@ -86,17 +86,25 @@
       <h2>Codes promo</h2>
       <div class="card">
         <table id="promoTable">
-          <thead><tr><th>Code</th><th>Type</th><th>Valeur</th><th>Actif</th><th></th></tr></thead>
+          <thead><tr><th>Code</th><th>Type</th><th>Valeur</th><th>Seuil min.</th><th>Utilisations</th><th>Expire</th><th>Actif</th><th></th></tr></thead>
           <tbody id="promoBody"></tbody>
         </table>
-        <div class="add-row" style="grid-template-columns:1.5fr 1fr 1fr auto;">
+        <div style="margin-top:16px; display:grid; grid-template-columns:1.2fr 1.3fr 1fr; gap:10px;">
           <input type="text" id="newPromoCode" placeholder="Code (ex: PROMO10)">
           <select id="newPromoType">
             <option value="percent">Pourcentage %</option>
             <option value="fixed">Montant fixe €</option>
+            <option value="free_delivery">Livraison offerte</option>
           </select>
-          <input type="number" id="newPromoValue" placeholder="Valeur" step="0.1">
-          <button class="btn-primary" id="addPromoBtn">Ajouter</button>
+          <input type="number" id="newPromoValue" placeholder="Valeur (% ou €)" step="0.1">
+        </div>
+        <div style="margin-top:10px; display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;">
+          <input type="number" id="newPromoMinSubtotal" placeholder="Seuil min. (€), 0 = aucun" step="0.1">
+          <input type="number" id="newPromoMaxUses" placeholder="Utilisations max (vide = illimité)" min="1">
+          <input type="date" id="newPromoExpires">
+        </div>
+        <div style="margin-top:12px;">
+          <button class="btn-primary" id="addPromoBtn">Ajouter le code</button>
         </div>
       </div>
     </section>
@@ -113,7 +121,8 @@
 
 <script>
 // === À REMPLIR ===
-const SUPABASE_URL = "https://tlkqcysrmkjhahhfjitu.supabase.co";
+const SUPABASE_URL = "https://tlkqcysrmkjhahhfjitu.supabase.co
+";
 const SUPABASE_ANON_KEY = "sb_publishable_RM91kJNsu1bJFU1IoPPxcQ_bLTxnLgZ";
 const ADMIN_PASSWORD = "we2320amse"; // mot de passe simple, pas une vraie sécurité
 // ==================
@@ -230,19 +239,28 @@ async function loadPromoCodes(){
   const body = document.getElementById('promoBody');
 
   if(codes.length === 0){
-    body.innerHTML = '<tr><td colspan="5" class="empty">Aucun code promo pour le moment.</td></tr>';
+    body.innerHTML = '<tr><td colspan="8" class="empty">Aucun code promo pour le moment.</td></tr>';
     return;
   }
 
-  body.innerHTML = codes.map(c => `
+  const typeLabel = { percent: '%', fixed: '€ fixe', free_delivery: 'Livraison offerte' };
+
+  body.innerHTML = codes.map(c => {
+    const valueStr = c.type === 'free_delivery' ? '—' : (c.type === 'percent' ? `${c.value}%` : `${c.value}€`);
+    const usesStr = c.max_uses ? `${c.times_used}/${c.max_uses}` : `${c.times_used} (illimité)`;
+    const expiresStr = c.expires_at ? new Date(c.expires_at).toLocaleDateString('fr-FR') : '—';
+    return `
     <tr data-id="${c.id}">
       <td>${c.code}</td>
-      <td>${c.type === 'percent' ? '%' : '€ fixe'}</td>
-      <td>${c.value}</td>
+      <td>${typeLabel[c.type] || c.type}</td>
+      <td>${valueStr}</td>
+      <td>${c.min_subtotal > 0 ? fmt(c.min_subtotal) : '—'}</td>
+      <td>${usesStr}</td>
+      <td>${expiresStr}</td>
       <td><button class="status-badge toggle-active-btn ${c.active ? 'active' : 'inactive'}" data-active="${c.active}">${c.active ? 'Actif' : 'Inactif'}</button></td>
       <td><button class="btn-danger delete-promo-btn">Supprimer</button></td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
 
   body.querySelectorAll('.toggle-active-btn').forEach(btn => {
     btn.addEventListener('click', async (e) => {
@@ -270,14 +288,29 @@ async function loadPromoCodes(){
 document.getElementById('addPromoBtn').addEventListener('click', async () => {
   const code = document.getElementById('newPromoCode').value.trim().toUpperCase();
   const type = document.getElementById('newPromoType').value;
-  const value = parseFloat(document.getElementById('newPromoValue').value);
-  if(!code || isNaN(value)) return alert('Code et valeur sont obligatoires.');
+  const valueRaw = document.getElementById('newPromoValue').value;
+  const value = type === 'free_delivery' ? null : parseFloat(valueRaw);
+  const minSubtotal = parseFloat(document.getElementById('newPromoMinSubtotal').value) || 0;
+  const maxUsesRaw = document.getElementById('newPromoMaxUses').value;
+  const maxUses = maxUsesRaw ? parseInt(maxUsesRaw) : null;
+  const expiresRaw = document.getElementById('newPromoExpires').value;
+  const expiresAt = expiresRaw ? new Date(expiresRaw + 'T23:59:59').toISOString() : null;
+
+  if(!code) return alert('Le code est obligatoire.');
+  if(type !== 'free_delivery' && isNaN(value)) return alert('La valeur est obligatoire pour ce type de code.');
+
   await fetch(`${SUPABASE_URL}/rest/v1/promo_codes`, {
     method: 'POST', headers: { ...headers, Prefer: 'return=minimal' },
-    body: JSON.stringify({ code, type, value, active: true })
+    body: JSON.stringify({
+      code, type, value, active: true,
+      min_subtotal: minSubtotal, max_uses: maxUses, expires_at: expiresAt
+    })
   });
   document.getElementById('newPromoCode').value = '';
   document.getElementById('newPromoValue').value = '';
+  document.getElementById('newPromoMinSubtotal').value = '';
+  document.getElementById('newPromoMaxUses').value = '';
+  document.getElementById('newPromoExpires').value = '';
   loadPromoCodes();
 });
 
