@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <style>
   :root{
     --cream:#FBF3E7; --cream-dark:#F2E5D3; --cocoa:#3E2723; --cocoa-light:#8A6E63;
@@ -65,6 +66,20 @@
   .promo-msg.ok{color:var(--sage);}
   .promo-msg.err{color:#A32D2D;}
   .receipt-line.discount .amount{color:var(--sage);}
+  .modal-overlay{
+    display:none; position:fixed; inset:0; background:rgba(62,39,35,0.45);
+    align-items:center; justify-content:center; z-index:50; padding:20px;
+  }
+  .modal-overlay.open{display:flex;}
+  .modal{background:var(--paper); border-radius:16px; padding:24px; max-width:420px; width:100%; max-height:85vh; overflow-y:auto;}
+  .modal h2{font-size:1.2rem; margin-bottom:14px;}
+  .modal-actions{display:flex; gap:10px; margin-top:18px;}
+  .modal-actions button{flex:1; padding:12px; border-radius:10px; border:1px solid var(--cream-dark); font-family:'Work Sans', sans-serif; font-weight:600; cursor:pointer; font-size:0.95rem;}
+  .modal-actions .btn-cancel{background:var(--cream);}
+  .modal-actions .btn-cancel:hover{background:var(--cream-dark);}
+  .modal-actions .btn-confirm{background:var(--caramel); color:var(--paper); border:none;}
+  .modal-actions .btn-confirm:hover{background:var(--caramel-dark);}
+  .cooldown-msg{display:none; background:#FBEBD8; color:var(--caramel-dark); border:1px solid #F0D5AC; border-radius:10px; padding:12px 14px; margin-top:14px; font-size:0.88rem; text-align:center;}
 </style>
 </head>
 <body>
@@ -81,6 +96,10 @@
       <div class="field-block">
         <label for="buyerName">Ton nom / pseudo</label>
         <input type="text" id="buyerName" placeholder="Ex : Léa">
+      </div>
+      <div class="field-block">
+        <label for="buyerEmail">Ton email (pour la confirmation)</label>
+        <input type="text" id="buyerEmail" placeholder="Ex : lea@email.com">
       </div>
       <div class="field-block">
         <label>Récupération</label>
@@ -107,7 +126,19 @@
         </div>
       </div>
       <button class="submit-btn" id="submitBtn" disabled>Envoyer ma commande</button>
-      <div class="confirm-msg" id="confirmMsg">Commande envoyée, merci ! 🎉</div>
+      <div class="confirm-msg" id="confirmMsg">Commande envoyée, merci ! 🎉 Vérifie ta boîte mail.</div>
+      <div class="cooldown-msg" id="cooldownMsg">Une commande a déjà été envoyée récemment. Merci de patienter un peu avant d'en renvoyer une.</div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <h2>Confirme ta commande</h2>
+    <div id="modalRecap"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" id="modalCancelBtn">Modifier</button>
+      <button class="btn-confirm" id="modalConfirmBtn">Confirmer ma commande</button>
     </div>
   </div>
 </div>
@@ -117,7 +148,14 @@
 const SUPABASE_URL = "https://tlkqcysrmkjhahhfjitu.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_RM91kJNsu1bJFU1IoPPxcQ_bLTxnLgZ";
 const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1523321413862424678/kCwkNykGB7hcvwmOv0O8ZtemUFyWaWvvQoE8I4uG1TuLH8BdIIMp1M2ng5XayVPp5zl-";
+const EMAILJS_PUBLIC_KEY = "wPAUuIZWSlZ-ivT6G";
+const EMAILJS_SERVICE_ID = "service_t5vkog6";
+const EMAILJS_TEMPLATE_ID = "template_eezjn0k";
 // ==================
+
+emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
+
+const COOLDOWN_MS = 60 * 1000; // 1 minute entre deux commandes sur le même navigateur
 
 let PRODUCTS = [];
 const state = {};
@@ -256,11 +294,19 @@ function renderReceipt(){
   linesEl.innerHTML = html;
   totalEl.textContent = fmt(total);
   const nameOk = document.getElementById('buyerName').value.trim().length > 0;
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(document.getElementById('buyerEmail').value.trim());
   const addressOk = currentDeliveryMode() !== 'delivery' || document.getElementById('addressInput').value.trim().length > 0;
-  submitBtn.disabled = items.length === 0 || !nameOk || !addressOk;
+  const cooldownOk = !isOnCooldown();
+  submitBtn.disabled = items.length === 0 || !nameOk || !emailOk || !addressOk || !cooldownOk;
+}
+
+function isOnCooldown(){
+  const last = Number(localStorage.getItem('lastOrderAt') || 0);
+  return Date.now() - last < COOLDOWN_MS;
 }
 
 document.getElementById('buyerName').addEventListener('input', renderReceipt);
+document.getElementById('buyerEmail').addEventListener('input', renderReceipt);
 
 document.querySelectorAll('input[name="deliveryMode"]').forEach(radio => {
   radio.addEventListener('change', () => {
@@ -317,24 +363,60 @@ async function notifyDiscord(order){
   } catch(err){ console.error('Discord notify failed', err); }
 }
 
-document.getElementById('submitBtn').addEventListener('click', async () => {
+document.getElementById('submitBtn').addEventListener('click', () => {
+  const { items, discount, deliveryFee, deliveryMode, total } = computeTotals();
+  const name = document.getElementById('buyerName').value.trim();
+  const email = document.getElementById('buyerEmail').value.trim();
+  const address = document.getElementById('addressInput').value.trim();
+
+  const lines = items.map(it => `${it.name} ×${it.qty} — ${fmt(it.lineTotal)}`).join('<br>');
+  let recap = `<p><strong>${name}</strong> — ${email}</p><p>${lines}</p>`;
+  recap += `<p>${deliveryMode === 'delivery' ? `Livraison — ${address}` : 'À récupérer'}</p>`;
+  if(discount > 0) recap += `<p>Réduction (${appliedPromo.code}) : -${fmt(discount)}</p>`;
+  if(deliveryFee > 0) recap += `<p>Livraison : ${fmt(deliveryFee)}</p>`;
+  recap += `<p><strong>Total : ${fmt(total)}</strong></p>`;
+
+  document.getElementById('modalRecap').innerHTML = recap;
+  document.getElementById('modalOverlay').classList.add('open');
+});
+
+document.getElementById('modalCancelBtn').addEventListener('click', () => {
+  document.getElementById('modalOverlay').classList.remove('open');
+});
+
+async function sendConfirmationEmail(order){
+  const lines = order.items.map(it => `${it.name} ×${it.qty} — ${fmt(it.lineTotal)}`).join('\n');
+  const deliveryInfo = order.delivery_mode === 'delivery' ? `Livraison — ${order.address}` : 'À récupérer';
+  try {
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+      to_email: order.email,
+      to_name: order.buyer_name,
+      order_lines: lines,
+      total: fmt(order.total),
+      delivery_info: deliveryInfo
+    });
+  } catch(err){ console.error('Email confirmation failed', err); }
+}
+
+document.getElementById('modalConfirmBtn').addEventListener('click', async () => {
   const { items, subtotal, discount, deliveryFee, deliveryMode, total } = computeTotals();
   const name = document.getElementById('buyerName').value.trim();
+  const email = document.getElementById('buyerEmail').value.trim();
   const address = document.getElementById('addressInput').value.trim();
-  if(items.length === 0 || !name) return;
+  if(items.length === 0 || !name || !email) return;
   if(deliveryMode === 'delivery' && !address) return;
 
   const order = {
-    buyer_name: name, items, subtotal, total, status: 'pending',
+    buyer_name: name, email, items, subtotal, total, status: 'pending',
     delivery_mode: deliveryMode, address: deliveryMode === 'delivery' ? address : null,
     delivery_fee: deliveryFee,
     promo_code: appliedPromo ? appliedPromo.code : null,
     discount
   };
 
-  const submitBtn = document.getElementById('submitBtn');
-  submitBtn.disabled = true;
-  submitBtn.textContent = 'Envoi...';
+  const confirmBtn = document.getElementById('modalConfirmBtn');
+  confirmBtn.disabled = true;
+  confirmBtn.textContent = 'Envoi...';
 
   try {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/orders`, {
@@ -350,10 +432,15 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
     if(!res.ok) throw new Error('insert failed');
 
     await notifyDiscord(order);
+    await sendConfirmationEmail(order);
 
+    localStorage.setItem('lastOrderAt', String(Date.now()));
+
+    document.getElementById('modalOverlay').classList.remove('open');
     document.getElementById('confirmMsg').style.display = 'block';
     PRODUCTS.forEach(p => { state[p.id] = 0; document.getElementById(`qty-${p.id}`).textContent = '0'; });
     document.getElementById('buyerName').value = '';
+    document.getElementById('buyerEmail').value = '';
     document.getElementById('addressInput').value = '';
     document.getElementById('promoInput').value = '';
     document.getElementById('promoMsg').textContent = '';
@@ -361,14 +448,22 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
     document.querySelector('input[name="deliveryMode"][value="pickup"]').checked = true;
     document.getElementById('addressInput').style.display = 'none';
     renderReceipt();
-    setTimeout(() => { document.getElementById('confirmMsg').style.display = 'none'; }, 4000);
+    setTimeout(() => { document.getElementById('confirmMsg').style.display = 'none'; }, 5000);
+    checkCooldownDisplay();
   } catch(err){
     alert("La commande n'a pas pu être envoyée, réessaie.");
     console.error(err);
   } finally {
-    submitBtn.textContent = 'Envoyer ma commande';
+    confirmBtn.textContent = 'Confirmer ma commande';
+    confirmBtn.disabled = false;
   }
 });
+
+function checkCooldownDisplay(){
+  document.getElementById('cooldownMsg').style.display = isOnCooldown() ? 'block' : 'none';
+  renderReceipt();
+}
+setInterval(checkCooldownDisplay, 2000);
 
 loadProducts();
 </script>
