@@ -86,17 +86,21 @@
       <h2>Codes promo</h2>
       <div class="card">
         <table id="promoTable">
-          <thead><tr><th>Code</th><th>Type</th><th>Valeur</th><th>Seuil min.</th><th>Utilisations</th><th>Expire</th><th>Actif</th><th></th></tr></thead>
+          <thead><tr><th>Code</th><th>Réduction</th><th>Livraison offerte</th><th>Seuil min.</th><th>Utilisations</th><th>Expire</th><th>Actif</th><th></th></tr></thead>
           <tbody id="promoBody"></tbody>
         </table>
         <div style="margin-top:16px; display:grid; grid-template-columns:1.2fr 1.3fr 1fr; gap:10px;">
           <input type="text" id="newPromoCode" placeholder="Code (ex: PROMO10)">
           <select id="newPromoType">
+            <option value="none">Aucune réduction sur le total</option>
             <option value="percent">Pourcentage %</option>
             <option value="fixed">Montant fixe €</option>
-            <option value="free_delivery">Livraison offerte</option>
           </select>
           <input type="number" id="newPromoValue" placeholder="Valeur (% ou €)" step="0.1">
+        </div>
+        <div style="margin-top:10px; display:flex; align-items:center; gap:8px;">
+          <input type="checkbox" id="newPromoFreeDelivery" style="width:auto;">
+          <label for="newPromoFreeDelivery" style="font-size:0.88rem;">Ce code offre aussi la livraison</label>
         </div>
         <div style="margin-top:10px; display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;">
           <input type="number" id="newPromoMinSubtotal" placeholder="Seuil min. (€), 0 = aucun" step="0.1">
@@ -242,17 +246,17 @@ async function loadPromoCodes(){
     return;
   }
 
-  const typeLabel = { percent: '%', fixed: '€ fixe', free_delivery: 'Livraison offerte' };
+  const typeLabel = { percent: '%', fixed: '€ fixe', none: '—' };
 
   body.innerHTML = codes.map(c => {
-    const valueStr = c.type === 'free_delivery' ? '—' : (c.type === 'percent' ? `${c.value}%` : `${c.value}€`);
+    const valueStr = c.type === 'none' ? '—' : (c.type === 'percent' ? `${c.value}%` : `${c.value}€`);
     const usesStr = c.max_uses ? `${c.times_used}/${c.max_uses}` : `${c.times_used} (illimité)`;
     const expiresStr = c.expires_at ? new Date(c.expires_at).toLocaleDateString('fr-FR') : '—';
     return `
     <tr data-id="${c.id}">
       <td>${c.code}</td>
-      <td>${typeLabel[c.type] || c.type}</td>
       <td>${valueStr}</td>
+      <td>${c.free_delivery ? '✓' : '—'}</td>
       <td>${c.min_subtotal > 0 ? fmt(c.min_subtotal) : '—'}</td>
       <td>${usesStr}</td>
       <td>${expiresStr}</td>
@@ -288,7 +292,8 @@ document.getElementById('addPromoBtn').addEventListener('click', async () => {
   const code = document.getElementById('newPromoCode').value.trim().toUpperCase();
   const type = document.getElementById('newPromoType').value;
   const valueRaw = document.getElementById('newPromoValue').value;
-  const value = type === 'free_delivery' ? null : parseFloat(valueRaw);
+  const value = type === 'none' ? null : parseFloat(valueRaw);
+  const freeDelivery = document.getElementById('newPromoFreeDelivery').checked;
   const minSubtotal = parseFloat(document.getElementById('newPromoMinSubtotal').value) || 0;
   const maxUsesRaw = document.getElementById('newPromoMaxUses').value;
   const maxUses = maxUsesRaw ? parseInt(maxUsesRaw) : null;
@@ -296,17 +301,19 @@ document.getElementById('addPromoBtn').addEventListener('click', async () => {
   const expiresAt = expiresRaw ? new Date(expiresRaw + 'T23:59:59').toISOString() : null;
 
   if(!code) return alert('Le code est obligatoire.');
-  if(type !== 'free_delivery' && isNaN(value)) return alert('La valeur est obligatoire pour ce type de code.');
+  if(type !== 'none' && isNaN(value)) return alert('La valeur est obligatoire pour ce type de réduction.');
+  if(type === 'none' && !freeDelivery) return alert("Ce code n'aurait aucun effet : choisis une réduction et/ou coche la livraison offerte.");
 
   await fetch(`${SUPABASE_URL}/rest/v1/promo_codes`, {
     method: 'POST', headers: { ...headers, Prefer: 'return=minimal' },
     body: JSON.stringify({
-      code, type, value, active: true,
+      code, type, value, free_delivery: freeDelivery, active: true,
       min_subtotal: minSubtotal, max_uses: maxUses, expires_at: expiresAt
     })
   });
   document.getElementById('newPromoCode').value = '';
   document.getElementById('newPromoValue').value = '';
+  document.getElementById('newPromoFreeDelivery').checked = false;
   document.getElementById('newPromoMinSubtotal').value = '';
   document.getElementById('newPromoMaxUses').value = '';
   document.getElementById('newPromoExpires').value = '';
