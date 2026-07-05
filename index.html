@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Commander des cookies</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --cream:#FBF3E7; --cream-dark:#F2E5D3; --cocoa:#3E2723; --cocoa-light:#8A6E63;
+    --caramel:#C17A3F; --caramel-dark:#9C5E2C; --sage:#6E8C63; --paper:#FFFDF9;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; font-family:'Work Sans', sans-serif; background:var(--cream); color:var(--cocoa); padding:0 0 3rem;}
+  h1,h2{font-family:'Fraunces', serif; font-weight:600; margin:0;}
+  .wrap{max-width:1000px; margin:0 auto; padding:0 20px;}
+  header{padding:2.5rem 0 1.5rem; text-align:center;}
+  header h1{font-size:2.2rem;}
+  header p{color:var(--cocoa-light); margin:0.5rem 0 0;}
+  .layout{display:grid; grid-template-columns:1.4fr 1fr; gap:32px; align-items:start;}
+  @media (max-width:760px){ .layout{grid-template-columns:1fr;} }
+  .field-block{margin-bottom:1.5rem;}
+  .field-block label{display:block; font-size:0.85rem; color:var(--cocoa-light); margin-bottom:6px; font-weight:500;}
+  .field-block input[type=text]{width:100%; padding:12px 14px; border-radius:10px; border:1px solid var(--cream-dark); background:var(--paper); font-size:1rem; font-family:inherit; color:var(--cocoa);}
+  .field-block input[type=text]:focus{outline:2px solid var(--caramel); outline-offset:1px;}
+  .products{display:flex; flex-direction:column; gap:12px;}
+  .product{background:var(--paper); border:1px solid var(--cream-dark); border-radius:14px; padding:14px 16px; display:flex; align-items:center; gap:14px;}
+  .cookie-icon{flex-shrink:0; width:52px; height:52px;}
+  .product-info{flex:1; min-width:0;}
+  .product-info .name{font-weight:600; font-size:1.02rem;}
+  .product-info .desc{color:var(--cocoa-light); font-size:0.85rem; margin-top:2px;}
+  .product-info .price{font-family:'IBM Plex Mono', monospace; color:var(--caramel-dark); font-size:0.9rem; margin-top:4px;}
+  .stepper{display:flex; align-items:center; gap:10px; flex-shrink:0;}
+  .stepper button{width:32px; height:32px; border-radius:8px; border:1px solid var(--cream-dark); background:var(--cream); color:var(--cocoa); font-size:1.1rem; cursor:pointer; display:flex; align-items:center; justify-content:center;}
+  .stepper button:hover{background:var(--cream-dark);}
+  .stepper span{min-width:20px; text-align:center; font-weight:600; font-family:'IBM Plex Mono', monospace;}
+  .receipt-wrap{position:sticky; top:20px;}
+  .receipt{background:var(--paper); padding:24px 22px 30px; border:1px solid var(--cream-dark); border-top:none;
+    clip-path: polygon(0% 0%, 100% 0%, 100% 96%, 95% 100%, 90% 96%, 85% 100%, 80% 96%, 75% 100%, 70% 96%, 65% 100%, 60% 96%, 55% 100%, 50% 96%, 45% 100%, 40% 96%, 35% 100%, 30% 96%, 25% 100%, 20% 96%, 15% 100%, 10% 96%, 5% 100%, 0% 96%);}
+  .receipt-top{border-top:3px dashed var(--cream-dark); padding-top:16px; margin-top:-1px;}
+  .receipt h2{font-size:1.15rem; margin-bottom:2px;}
+  .receipt .subtitle{color:var(--cocoa-light); font-size:0.82rem; margin-bottom:16px;}
+  .receipt-line{display:flex; align-items:flex-end; gap:6px; font-size:0.88rem; margin-bottom:8px;}
+  .receipt-line .label{white-space:nowrap;}
+  .receipt-line .leader{flex:1; border-bottom:1px dotted var(--cocoa-light); height:1px; margin-bottom:4px;}
+  .receipt-line .amount{font-family:'IBM Plex Mono', monospace; white-space:nowrap;}
+  .receipt-empty{color:var(--cocoa-light); font-size:0.88rem; font-style:italic; padding:8px 0;}
+  .receipt-total{display:flex; justify-content:space-between; align-items:baseline; border-top:1px solid var(--cocoa); margin-top:12px; padding-top:12px; font-family:'IBM Plex Mono', monospace; font-size:1.15rem; font-weight:500;}
+  .submit-btn{width:100%; margin-top:18px; padding:13px; border:none; border-radius:10px; background:var(--caramel); color:var(--paper); font-family:'Work Sans', sans-serif; font-size:1rem; font-weight:600; cursor:pointer;}
+  .submit-btn:hover{background:var(--caramel-dark);}
+  .submit-btn:disabled{background:var(--cream-dark); color:var(--cocoa-light); cursor:not-allowed;}
+  .confirm-msg{display:none; background:#EEF3EB; color:var(--sage); border:1px solid #D6E3CE; border-radius:10px; padding:12px 14px; margin-top:14px; font-size:0.9rem; text-align:center;}
+  .loading, .error-msg{text-align:center; color:var(--cocoa-light); padding:2rem 0;}
+  .error-msg{color:#A32D2D;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🍪 Commande de cookies</h1>
+    <p>Choisis tes cookies, on calcule le total pour toi.</p>
+  </header>
+
+  <div id="loadingMsg" class="loading">Chargement des produits…</div>
+
+  <div id="orderView" class="layout" style="display:none;">
+    <div>
+      <div class="field-block">
+        <label for="buyerName">Ton nom / pseudo</label>
+        <input type="text" id="buyerName" placeholder="Ex : Léa">
+      </div>
+      <div class="products" id="productsList"></div>
+    </div>
+    <div class="receipt-wrap">
+      <div class="receipt">
+        <div class="receipt-top">
+          <h2>Ton ticket</h2>
+          <div class="subtitle">Mis à jour en direct</div>
+          <div id="receiptLines"></div>
+          <div class="receipt-total"><span>Total</span><span id="receiptTotal">0,00 €</span></div>
+        </div>
+      </div>
+      <button class="submit-btn" id="submitBtn" disabled>Envoyer ma commande</button>
+      <div class="confirm-msg" id="confirmMsg">Commande envoyée, merci ! 🎉</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// === À REMPLIR ===
+const SUPABASE_URL = "https://tlkqcysrmkjhahhfjitu.supabase.co/rest/v1/";
+const SUPABASE_ANON_KEY = "sb_publishable_RM91kJNsu1bJFU1IoPPxcQ_bLTxnLgZ";
+const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1523321413862424678/kCwkNykGB7hcvwmOv0O8ZtemUFyWaWvvQoE8I4uG1TuLH8BdIIMp1M2ng5XayVPp5zl-";
+// ==================
+
+let PRODUCTS = [];
+const state = {};
+
+function fmt(n){ return n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; }
+
+function cookieIcon(seed){
+  const rand = (i) => { const x = Math.sin(seed * 999 + i * 37) * 10000; return x - Math.floor(x); };
+  let dots = '';
+  for(let i=0;i<7;i++){
+    const cx = 14 + rand(i)*24, cy = 14 + rand(i+10)*24;
+    dots += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="2.4" fill="#3E2723"/>`;
+  }
+  return `<svg class="cookie-icon" viewBox="0 0 52 52" xmlns="http://www.w3.org/2000/svg"><circle cx="26" cy="26" r="24" fill="#E3A768" stroke="#9C5E2C" stroke-width="1.5"/>${dots}</svg>`;
+}
+
+async function loadProducts(){
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/products?select=*&order=id.asc`, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+    });
+    if(!res.ok) throw new Error('load failed');
+    PRODUCTS = await res.json();
+    PRODUCTS.forEach(p => state[p.id] = 0);
+    document.getElementById('loadingMsg').style.display = 'none';
+    document.getElementById('orderView').style.display = 'grid';
+    renderProducts();
+    renderReceipt();
+  } catch(err){
+    document.getElementById('loadingMsg').innerHTML = '<div class="error-msg">Impossible de charger les produits. Vérifie la config Supabase.</div>';
+  }
+}
+
+function renderProducts(){
+  const list = document.getElementById('productsList');
+  list.innerHTML = PRODUCTS.map((p, idx) => `
+    <div class="product">
+      ${cookieIcon(idx+1)}
+      <div class="product-info">
+        <div class="name">${p.name}</div>
+        <div class="desc">${p.description || ''}</div>
+        <div class="price">${fmt(Number(p.price))} / unité</div>
+      </div>
+      <div class="stepper">
+        <button type="button" data-action="dec" data-id="${p.id}" aria-label="Retirer">−</button>
+        <span id="qty-${p.id}">0</span>
+        <button type="button" data-action="inc" data-id="${p.id}" aria-label="Ajouter">+</button>
+      </div>
+    </div>
+  `).join('');
+
+  list.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-action]');
+    if(!btn) return;
+    const id = btn.dataset.id;
+    if(btn.dataset.action === 'inc') state[id]++;
+    if(btn.dataset.action === 'dec') state[id] = Math.max(0, state[id]-1);
+    document.getElementById(`qty-${id}`).textContent = state[id];
+    renderReceipt();
+  });
+}
+
+function currentItems(){
+  return PRODUCTS.filter(p => state[p.id] > 0).map(p => ({
+    name: p.name, qty: state[p.id], price: Number(p.price), lineTotal: Number(p.price) * state[p.id]
+  }));
+}
+
+function renderReceipt(){
+  const items = currentItems();
+  const linesEl = document.getElementById('receiptLines');
+  const totalEl = document.getElementById('receiptTotal');
+  const submitBtn = document.getElementById('submitBtn');
+
+  linesEl.innerHTML = items.length === 0
+    ? '<div class="receipt-empty">Aucun cookie sélectionné pour le moment.</div>'
+    : items.map(it => `
+      <div class="receipt-line">
+        <span class="label">${it.name} ×${it.qty}</span>
+        <span class="leader"></span>
+        <span class="amount">${fmt(it.lineTotal)}</span>
+      </div>`).join('');
+
+  const total = items.reduce((sum, it) => sum + it.lineTotal, 0);
+  totalEl.textContent = fmt(total);
+  const nameOk = document.getElementById('buyerName').value.trim().length > 0;
+  submitBtn.disabled = items.length === 0 || !nameOk;
+}
+
+document.getElementById('buyerName').addEventListener('input', renderReceipt);
+
+async function notifyDiscord(order){
+  const lines = order.items.map(it => `• ${it.name} ×${it.qty} — ${fmt(it.lineTotal)}`).join('\n');
+  const payload = {
+    embeds: [{
+      title: `Nouvelle commande de ${order.buyer_name}`,
+      description: lines,
+      fields: [{ name: 'Total', value: fmt(order.total), inline: true }],
+      color: 12683583,
+      timestamp: new Date().toISOString()
+    }]
+  };
+  try {
+    await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    });
+  } catch(err){ console.error('Discord notify failed', err); }
+}
+
+document.getElementById('submitBtn').addEventListener('click', async () => {
+  const items = currentItems();
+  const name = document.getElementById('buyerName').value.trim();
+  if(items.length === 0 || !name) return;
+  const total = items.reduce((sum, it) => sum + it.lineTotal, 0);
+  const order = { buyer_name: name, items, total, status: 'pending' };
+
+  const submitBtn = document.getElementById('submitBtn');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Envoi...';
+
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/orders`, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal'
+      },
+      body: JSON.stringify(order)
+    });
+    if(!res.ok) throw new Error('insert failed');
+
+    await notifyDiscord(order);
+
+    document.getElementById('confirmMsg').style.display = 'block';
+    PRODUCTS.forEach(p => { state[p.id] = 0; document.getElementById(`qty-${p.id}`).textContent = '0'; });
+    document.getElementById('buyerName').value = '';
+    renderReceipt();
+    setTimeout(() => { document.getElementById('confirmMsg').style.display = 'none'; }, 4000);
+  } catch(err){
+    alert("La commande n'a pas pu être envoyée, réessaie.");
+    console.error(err);
+  } finally {
+    submitBtn.textContent = 'Envoyer ma commande';
+  }
+});
+
+loadProducts();
+</script>
+</body>
+</html>
