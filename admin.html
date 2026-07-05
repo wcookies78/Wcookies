@@ -115,7 +115,7 @@
 // === À REMPLIR ===
 const SUPABASE_URL = "https://tlkqcysrmkjhahhfjitu.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_RM91kJNsu1bJFU1IoPPxcQ_bLTxnLgZ";
-const ADMIN_PASSWORD = "vtpcmdp"; // mot de passe simple, pas une vraie sécurité
+const ADMIN_PASSWORD = "change-moi"; // mot de passe simple, pas une vraie sécurité
 // ==================
 
 const headers = {
@@ -301,7 +301,7 @@ async function loadOrders(){
     const promoStr = o.promo_code ? `${o.promo_code} (-${fmt(o.discount)})` : '—';
     return `
       <tr>
-        <td>${o.buyer_name}</td>
+        <td>${o.buyer_name}<br><span style="color:var(--cocoa-light); font-size:0.78rem;">${o.email || ''}</span></td>
         <td>${itemsStr}</td>
         <td>${deliveryStr}</td>
         <td>${promoStr}</td>
