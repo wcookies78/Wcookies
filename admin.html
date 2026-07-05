@@ -20,7 +20,10 @@
   table{width:100%; border-collapse:collapse;}
   th, td{padding:8px 10px; text-align:left; font-size:0.88rem; border-bottom:1px solid var(--cream-dark); vertical-align:middle;}
   th{color:var(--cocoa-light); font-weight:500;}
-  input[type=text], input[type=number]{width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--cream-dark); background:var(--cream); font-family:inherit; font-size:0.88rem;}
+  input[type=text], input[type=number], select{width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--cream-dark); background:var(--cream); font-family:inherit; font-size:0.88rem;}
+  .status-badge{padding:4px 10px; border-radius:20px; font-size:0.75rem; border:none;}
+  .status-badge.active{background:#EEF3EB; color:var(--sage);}
+  .status-badge.inactive{background:#F2E5D3; color:var(--cocoa-light);}
   button{padding:8px 14px; border-radius:8px; border:1px solid var(--cream-dark); background:var(--cream); font-family:inherit; font-size:0.85rem; cursor:pointer;}
   button:hover{background:var(--cream-dark);}
   .btn-primary{background:var(--caramel); color:var(--paper); border:none;}
@@ -66,6 +69,39 @@
     </section>
 
     <section>
+      <h2>Réglages livraison</h2>
+      <div class="card">
+        <div class="add-row" style="grid-template-columns:2fr 1fr;">
+          <div>Frais de livraison (€)</div>
+          <input type="number" id="deliveryFeeInput" step="0.1">
+        </div>
+        <div style="margin-top:12px;">
+          <button class="btn-primary" id="saveDeliveryFeeBtn">Enregistrer</button>
+          <span id="deliveryFeeMsg" style="font-size:0.85rem; color:var(--sage); margin-left:8px;"></span>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Codes promo</h2>
+      <div class="card">
+        <table id="promoTable">
+          <thead><tr><th>Code</th><th>Type</th><th>Valeur</th><th>Actif</th><th></th></tr></thead>
+          <tbody id="promoBody"></tbody>
+        </table>
+        <div class="add-row" style="grid-template-columns:1.5fr 1fr 1fr auto;">
+          <input type="text" id="newPromoCode" placeholder="Code (ex: PROMO10)">
+          <select id="newPromoType">
+            <option value="percent">Pourcentage %</option>
+            <option value="fixed">Montant fixe €</option>
+          </select>
+          <input type="number" id="newPromoValue" placeholder="Valeur" step="0.1">
+          <button class="btn-primary" id="addPromoBtn">Ajouter</button>
+        </div>
+      </div>
+    </section>
+
+    <section>
       <h2>Commandes</h2>
       <div class="card">
         <div id="ordersWrap"><div class="empty">Chargement…</div></div>
@@ -79,7 +115,7 @@
 // === À REMPLIR ===
 const SUPABASE_URL = "https://tlkqcysrmkjhahhfjitu.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_RM91kJNsu1bJFU1IoPPxcQ_bLTxnLgZ";
-const ADMIN_PASSWORD = "testmdp"; // mot de passe simple, pas une vraie sécurité
+const ADMIN_PASSWORD = "vtpcmdp"; // mot de passe simple, pas une vraie sécurité
 // ==================
 
 const headers = {
@@ -95,6 +131,8 @@ document.getElementById('pwBtn').addEventListener('click', () => {
     document.getElementById('gate').style.display = 'none';
     document.getElementById('adminContent').style.display = 'block';
     loadProducts();
+    loadSettings();
+    loadPromoCodes();
     loadOrders();
   } else {
     document.getElementById('pwError').style.display = 'block';
@@ -158,6 +196,91 @@ document.getElementById('addBtn').addEventListener('click', async () => {
   loadProducts();
 });
 
+let settingsId = null;
+
+async function loadSettings(){
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/settings?select=*&limit=1`, { headers });
+  const rows = await res.json();
+  if(rows.length > 0){
+    settingsId = rows[0].id;
+    document.getElementById('deliveryFeeInput').value = rows[0].delivery_fee;
+  }
+}
+
+document.getElementById('saveDeliveryFeeBtn').addEventListener('click', async () => {
+  const fee = parseFloat(document.getElementById('deliveryFeeInput').value) || 0;
+  if(settingsId){
+    await fetch(`${SUPABASE_URL}/rest/v1/settings?id=eq.${settingsId}`, {
+      method: 'PATCH', headers, body: JSON.stringify({ delivery_fee: fee })
+    });
+  } else {
+    await fetch(`${SUPABASE_URL}/rest/v1/settings`, {
+      method: 'POST', headers: { ...headers, Prefer: 'return=minimal' }, body: JSON.stringify({ delivery_fee: fee })
+    });
+  }
+  const msg = document.getElementById('deliveryFeeMsg');
+  msg.textContent = 'Enregistré ✓';
+  setTimeout(() => msg.textContent = '', 2000);
+  loadSettings();
+});
+
+async function loadPromoCodes(){
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/promo_codes?select=*&order=id.asc`, { headers });
+  const codes = await res.json();
+  const body = document.getElementById('promoBody');
+
+  if(codes.length === 0){
+    body.innerHTML = '<tr><td colspan="5" class="empty">Aucun code promo pour le moment.</td></tr>';
+    return;
+  }
+
+  body.innerHTML = codes.map(c => `
+    <tr data-id="${c.id}">
+      <td>${c.code}</td>
+      <td>${c.type === 'percent' ? '%' : '€ fixe'}</td>
+      <td>${c.value}</td>
+      <td><button class="status-badge toggle-active-btn ${c.active ? 'active' : 'inactive'}" data-active="${c.active}">${c.active ? 'Actif' : 'Inactif'}</button></td>
+      <td><button class="btn-danger delete-promo-btn">Supprimer</button></td>
+    </tr>
+  `).join('');
+
+  body.querySelectorAll('.toggle-active-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const row = e.target.closest('tr');
+      const id = row.dataset.id;
+      const newActive = btn.dataset.active !== 'true';
+      await fetch(`${SUPABASE_URL}/rest/v1/promo_codes?id=eq.${id}`, {
+        method: 'PATCH', headers, body: JSON.stringify({ active: newActive })
+      });
+      loadPromoCodes();
+    });
+  });
+
+  body.querySelectorAll('.delete-promo-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const row = e.target.closest('tr');
+      const id = row.dataset.id;
+      if(!confirm('Supprimer ce code promo ?')) return;
+      await fetch(`${SUPABASE_URL}/rest/v1/promo_codes?id=eq.${id}`, { method: 'DELETE', headers });
+      loadPromoCodes();
+    });
+  });
+}
+
+document.getElementById('addPromoBtn').addEventListener('click', async () => {
+  const code = document.getElementById('newPromoCode').value.trim().toUpperCase();
+  const type = document.getElementById('newPromoType').value;
+  const value = parseFloat(document.getElementById('newPromoValue').value);
+  if(!code || isNaN(value)) return alert('Code et valeur sont obligatoires.');
+  await fetch(`${SUPABASE_URL}/rest/v1/promo_codes`, {
+    method: 'POST', headers: { ...headers, Prefer: 'return=minimal' },
+    body: JSON.stringify({ code, type, value, active: true })
+  });
+  document.getElementById('newPromoCode').value = '';
+  document.getElementById('newPromoValue').value = '';
+  loadPromoCodes();
+});
+
 async function loadOrders(){
   const res = await fetch(`${SUPABASE_URL}/rest/v1/orders?select=*&order=created_at.desc`, { headers });
   const orders = await res.json();
@@ -174,16 +297,20 @@ async function loadOrders(){
     const itemsStr = o.items.map(it => `${it.name} ×${it.qty}`).join(', ');
     const statusClass = o.status === 'done' ? 'done' : 'pending';
     const statusLabel = o.status === 'done' ? 'Livré' : 'À faire';
+    const deliveryStr = o.delivery_mode === 'delivery' ? `Livraison — ${o.address || ''}` : 'À récupérer';
+    const promoStr = o.promo_code ? `${o.promo_code} (-${fmt(o.discount)})` : '—';
     return `
       <tr>
         <td>${o.buyer_name}</td>
         <td>${itemsStr}</td>
+        <td>${deliveryStr}</td>
+        <td>${promoStr}</td>
         <td class="amount">${fmt(o.total)}</td>
         <td><button class="status-pill ${statusClass}" data-id="${o.id}" data-status="${o.status}">${statusLabel}</button></td>
       </tr>`;
   }).join('');
 
-  wrap.innerHTML = `<table><thead><tr><th>Nom</th><th>Commande</th><th>Total</th><th>Statut</th></tr></thead><tbody>${rows}</tbody></table>`;
+  wrap.innerHTML = `<table><thead><tr><th>Nom</th><th>Commande</th><th>Récupération</th><th>Promo</th><th>Total</th><th>Statut</th></tr></thead><tbody>${rows}</tbody></table>`;
   totalWrap.textContent = `Total de toutes les commandes : ${fmt(orders.reduce((s,o) => s + Number(o.total), 0))}`;
 
   wrap.querySelectorAll('.status-pill').forEach(btn => {

@@ -54,6 +54,17 @@
   .confirm-msg{display:none; background:#EEF3EB; color:var(--sage); border:1px solid #D6E3CE; border-radius:10px; padding:12px 14px; margin-top:14px; font-size:0.9rem; text-align:center;}
   .loading, .error-msg{text-align:center; color:var(--cocoa-light); padding:2rem 0;}
   .error-msg{color:#A32D2D;}
+  .delivery-choice{display:flex; gap:10px; margin-bottom:12px;}
+  .delivery-choice label{flex:1; display:flex; align-items:center; gap:8px; padding:10px 12px; border:1px solid var(--cream-dark); border-radius:10px; background:var(--paper); font-size:0.9rem; cursor:pointer;}
+  .delivery-choice input{margin:0;}
+  .promo-row{display:flex; gap:8px; margin-top:16px;}
+  .promo-row input{flex:1; padding:10px 12px; border-radius:10px; border:1px solid var(--cream-dark); background:var(--cream); font-family:inherit; font-size:0.88rem;}
+  .promo-row button{padding:0 16px; border-radius:10px; border:1px solid var(--cream-dark); background:var(--cream); font-family:inherit; font-size:0.85rem; cursor:pointer;}
+  .promo-row button:hover{background:var(--cream-dark);}
+  .promo-msg{font-size:0.8rem; margin-top:6px; min-height:1em;}
+  .promo-msg.ok{color:var(--sage);}
+  .promo-msg.err{color:#A32D2D;}
+  .receipt-line.discount .amount{color:var(--sage);}
 </style>
 </head>
 <body>
@@ -71,6 +82,14 @@
         <label for="buyerName">Ton nom / pseudo</label>
         <input type="text" id="buyerName" placeholder="Ex : Léa">
       </div>
+      <div class="field-block">
+        <label>Récupération</label>
+        <div class="delivery-choice">
+          <label><input type="radio" name="deliveryMode" value="pickup" checked> À récupérer</label>
+          <label><input type="radio" name="deliveryMode" value="delivery"> Livraison</label>
+        </div>
+        <input type="text" id="addressInput" placeholder="Ton adresse de livraison" style="display:none;">
+      </div>
       <div class="products" id="productsList"></div>
     </div>
     <div class="receipt-wrap">
@@ -79,6 +98,11 @@
           <h2>Ton ticket</h2>
           <div class="subtitle">Mis à jour en direct</div>
           <div id="receiptLines"></div>
+          <div class="promo-row">
+            <input type="text" id="promoInput" placeholder="Code promo">
+            <button type="button" id="promoBtn">Appliquer</button>
+          </div>
+          <div class="promo-msg" id="promoMsg"></div>
           <div class="receipt-total"><span>Total</span><span id="receiptTotal">0,00 €</span></div>
         </div>
       </div>
@@ -97,6 +121,8 @@ const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/152332141386242467
 
 let PRODUCTS = [];
 const state = {};
+let DELIVERY_FEE = 0;
+let appliedPromo = null;
 
 function fmt(n){ return n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; }
 
@@ -110,8 +136,21 @@ function cookieIcon(seed){
   return `<svg class="cookie-icon" viewBox="0 0 52 52" xmlns="http://www.w3.org/2000/svg"><circle cx="26" cy="26" r="24" fill="#E3A768" stroke="#9C5E2C" stroke-width="1.5"/>${dots}</svg>`;
 }
 
+async function loadSettings(){
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/settings?select=delivery_fee&limit=1`, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+    });
+    if(res.ok){
+      const rows = await res.json();
+      if(rows.length > 0) DELIVERY_FEE = Number(rows[0].delivery_fee);
+    }
+  } catch(err){ console.error('settings load failed', err); }
+}
+
 async function loadProducts(){
   try {
+    await loadSettings();
     const res = await fetch(`${SUPABASE_URL}/rest/v1/products?select=*&order=id.asc`, {
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
     });
@@ -162,13 +201,32 @@ function currentItems(){
   }));
 }
 
-function renderReceipt(){
+function currentDeliveryMode(){
+  const checked = document.querySelector('input[name="deliveryMode"]:checked');
+  return checked ? checked.value : 'pickup';
+}
+
+function computeTotals(){
   const items = currentItems();
+  const subtotal = items.reduce((sum, it) => sum + it.lineTotal, 0);
+  let discount = 0;
+  if(appliedPromo){
+    discount = appliedPromo.type === 'percent' ? subtotal * (appliedPromo.value / 100) : appliedPromo.value;
+    discount = Math.min(discount, subtotal);
+  }
+  const deliveryMode = currentDeliveryMode();
+  const deliveryFee = deliveryMode === 'delivery' ? DELIVERY_FEE : 0;
+  const total = Math.max(0, subtotal - discount) + deliveryFee;
+  return { items, subtotal, discount, deliveryFee, deliveryMode, total };
+}
+
+function renderReceipt(){
+  const { items, subtotal, discount, deliveryFee, total } = computeTotals();
   const linesEl = document.getElementById('receiptLines');
   const totalEl = document.getElementById('receiptTotal');
   const submitBtn = document.getElementById('submitBtn');
 
-  linesEl.innerHTML = items.length === 0
+  let html = items.length === 0
     ? '<div class="receipt-empty">Aucun cookie sélectionné pour le moment.</div>'
     : items.map(it => `
       <div class="receipt-line">
@@ -177,21 +235,77 @@ function renderReceipt(){
         <span class="amount">${fmt(it.lineTotal)}</span>
       </div>`).join('');
 
-  const total = items.reduce((sum, it) => sum + it.lineTotal, 0);
+  if(discount > 0){
+    html += `
+      <div class="receipt-line discount">
+        <span class="label">Réduction (${appliedPromo.code})</span>
+        <span class="leader"></span>
+        <span class="amount">-${fmt(discount)}</span>
+      </div>`;
+  }
+
+  if(deliveryFee > 0){
+    html += `
+      <div class="receipt-line">
+        <span class="label">Livraison</span>
+        <span class="leader"></span>
+        <span class="amount">${fmt(deliveryFee)}</span>
+      </div>`;
+  }
+
+  linesEl.innerHTML = html;
   totalEl.textContent = fmt(total);
   const nameOk = document.getElementById('buyerName').value.trim().length > 0;
-  submitBtn.disabled = items.length === 0 || !nameOk;
+  const addressOk = currentDeliveryMode() !== 'delivery' || document.getElementById('addressInput').value.trim().length > 0;
+  submitBtn.disabled = items.length === 0 || !nameOk || !addressOk;
 }
 
 document.getElementById('buyerName').addEventListener('input', renderReceipt);
 
+document.querySelectorAll('input[name="deliveryMode"]').forEach(radio => {
+  radio.addEventListener('change', () => {
+    document.getElementById('addressInput').style.display = currentDeliveryMode() === 'delivery' ? 'block' : 'none';
+    renderReceipt();
+  });
+});
+document.getElementById('addressInput').addEventListener('input', renderReceipt);
+
+document.getElementById('promoBtn').addEventListener('click', async () => {
+  const code = document.getElementById('promoInput').value.trim();
+  const msgEl = document.getElementById('promoMsg');
+  if(!code){ appliedPromo = null; msgEl.textContent = ''; renderReceipt(); return; }
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/promo_codes?code=eq.${encodeURIComponent(code)}&active=eq.true&select=*`, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+    });
+    const rows = await res.json();
+    if(rows.length === 0){
+      appliedPromo = null;
+      msgEl.textContent = 'Code invalide.';
+      msgEl.className = 'promo-msg err';
+    } else {
+      appliedPromo = { code: rows[0].code, type: rows[0].type, value: Number(rows[0].value) };
+      msgEl.textContent = rows[0].type === 'percent' ? `-${rows[0].value}% appliqué !` : `-${fmt(Number(rows[0].value))} appliqué !`;
+      msgEl.className = 'promo-msg ok';
+    }
+  } catch(err){
+    appliedPromo = null;
+    msgEl.textContent = 'Impossible de vérifier le code.';
+    msgEl.className = 'promo-msg err';
+  }
+  renderReceipt();
+});
+
 async function notifyDiscord(order){
   const lines = order.items.map(it => `• ${it.name} ×${it.qty} — ${fmt(it.lineTotal)}`).join('\n');
+  const fields = [{ name: 'Total', value: fmt(order.total), inline: true }];
+  fields.push({ name: 'Récupération', value: order.delivery_mode === 'delivery' ? `Livraison — ${order.address}` : 'À récupérer', inline: true });
+  if(order.discount > 0) fields.push({ name: 'Code promo', value: `${order.promo_code} (-${fmt(order.discount)})`, inline: true });
   const payload = {
     embeds: [{
       title: `Nouvelle commande de ${order.buyer_name}`,
       description: lines,
-      fields: [{ name: 'Total', value: fmt(order.total), inline: true }],
+      fields,
       color: 12683583,
       timestamp: new Date().toISOString()
     }]
@@ -204,11 +318,19 @@ async function notifyDiscord(order){
 }
 
 document.getElementById('submitBtn').addEventListener('click', async () => {
-  const items = currentItems();
+  const { items, subtotal, discount, deliveryFee, deliveryMode, total } = computeTotals();
   const name = document.getElementById('buyerName').value.trim();
+  const address = document.getElementById('addressInput').value.trim();
   if(items.length === 0 || !name) return;
-  const total = items.reduce((sum, it) => sum + it.lineTotal, 0);
-  const order = { buyer_name: name, items, total, status: 'pending' };
+  if(deliveryMode === 'delivery' && !address) return;
+
+  const order = {
+    buyer_name: name, items, subtotal, total, status: 'pending',
+    delivery_mode: deliveryMode, address: deliveryMode === 'delivery' ? address : null,
+    delivery_fee: deliveryFee,
+    promo_code: appliedPromo ? appliedPromo.code : null,
+    discount
+  };
 
   const submitBtn = document.getElementById('submitBtn');
   submitBtn.disabled = true;
@@ -232,6 +354,12 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
     document.getElementById('confirmMsg').style.display = 'block';
     PRODUCTS.forEach(p => { state[p.id] = 0; document.getElementById(`qty-${p.id}`).textContent = '0'; });
     document.getElementById('buyerName').value = '';
+    document.getElementById('addressInput').value = '';
+    document.getElementById('promoInput').value = '';
+    document.getElementById('promoMsg').textContent = '';
+    appliedPromo = null;
+    document.querySelector('input[name="deliveryMode"][value="pickup"]').checked = true;
+    document.getElementById('addressInput').style.display = 'none';
     renderReceipt();
     setTimeout(() => { document.getElementById('confirmMsg').style.display = 'none'; }, 4000);
   } catch(err){
