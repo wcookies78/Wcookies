@@ -102,6 +102,17 @@
     </section>
 
     <section>
+      <h2>Message conseil (page de commande)</h2>
+      <div class="card">
+        <textarea id="adviceTextInput" rows="4" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid var(--cream-dark); background:var(--cream); font-family:inherit; font-size:0.88rem;" placeholder="Ex : Commandez avant jeudi pour une livraison le week-end !"></textarea>
+        <div style="margin-top:12px;">
+          <button class="btn-primary" id="saveAdviceBtn">Enregistrer</button>
+          <span id="adviceMsg" style="font-size:0.85rem; color:var(--sage); margin-left:8px;"></span>
+        </div>
+      </div>
+    </section>
+
+    <section>
       <h2>Codes promo</h2>
       <div class="card">
         <table id="promoTable">
@@ -325,8 +336,26 @@ async function loadSettings(){
   if(rows.length > 0){
     settingsId = rows[0].id;
     document.getElementById('deliveryFeeInput').value = rows[0].delivery_fee;
+    document.getElementById('adviceTextInput').value = rows[0].advice_text || '';
   }
 }
+
+document.getElementById('saveAdviceBtn').addEventListener('click', async () => {
+  const text = document.getElementById('adviceTextInput').value;
+  if(settingsId){
+    await fetch(`${SUPABASE_URL}/rest/v1/settings?id=eq.${settingsId}`, {
+      method: 'PATCH', headers, body: JSON.stringify({ advice_text: text })
+    });
+  } else {
+    await fetch(`${SUPABASE_URL}/rest/v1/settings`, {
+      method: 'POST', headers: { ...headers, Prefer: 'return=minimal' }, body: JSON.stringify({ advice_text: text })
+    });
+  }
+  const msg = document.getElementById('adviceMsg');
+  msg.textContent = 'Enregistré ✓';
+  setTimeout(() => msg.textContent = '', 2000);
+  loadSettings();
+});
 
 document.getElementById('saveDeliveryFeeBtn').addEventListener('click', async () => {
   const fee = parseFloat(document.getElementById('deliveryFeeInput').value) || 0;
@@ -447,18 +476,20 @@ async function loadOrders(){
     const statusLabel = o.status === 'done' ? 'Livré' : 'À faire';
     const deliveryStr = o.delivery_mode === 'delivery' ? `Livraison — ${o.address || ''}` : 'À récupérer';
     const promoStr = o.promo_code ? `${o.promo_code} (-${fmt(o.discount)})` : '—';
+    const paymentStr = o.payment_method === 'paypal' ? 'PayPal' : 'Espèces';
     return `
       <tr>
         <td>${o.buyer_name}<br><span style="color:var(--cocoa-light); font-size:0.78rem;">${o.email || ''}</span></td>
         <td>${itemsStr}</td>
         <td>${deliveryStr}</td>
+        <td>${paymentStr}</td>
         <td>${promoStr}</td>
         <td class="amount">${fmt(o.total)}</td>
         <td><button class="status-pill ${statusClass}" data-id="${o.id}" data-status="${o.status}">${statusLabel}</button></td>
       </tr>`;
   }).join('');
 
-  wrap.innerHTML = `<table><thead><tr><th>Nom</th><th>Commande</th><th>Récupération</th><th>Promo</th><th>Total</th><th>Statut</th></tr></thead><tbody>${rows}</tbody></table>`;
+  wrap.innerHTML = `<table><thead><tr><th>Nom</th><th>Commande</th><th>Récupération</th><th>Paiement</th><th>Promo</th><th>Total</th><th>Statut</th></tr></thead><tbody>${rows}</tbody></table>`;
   totalWrap.textContent = `Total de toutes les commandes : ${fmt(orders.reduce((s,o) => s + Number(o.total), 0))}`;
 
   wrap.querySelectorAll('.status-pill').forEach(btn => {
