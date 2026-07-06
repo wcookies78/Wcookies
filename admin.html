@@ -44,6 +44,25 @@
 <div class="wrap">
   <header><h1>🍪 Admin</h1></header>
 
+  <div id="validateGate" class="gate" style="display:none;">
+    <p>Mot de passe admin</p>
+    <input type="text" id="pwInputValidate" placeholder="Mot de passe">
+    <br><button class="btn-primary" id="pwBtnValidate">Entrer</button>
+    <p id="pwErrorValidate" style="color:#A32D2D; font-size:0.85rem; display:none;">Mot de passe incorrect.</p>
+  </div>
+
+  <div id="validateCard" style="display:none; max-width:480px; margin:3rem auto;">
+    <div class="card">
+      <h2 style="margin-bottom:14px;">Valider cette commande ?</h2>
+      <div id="validateRecap"></div>
+      <div style="margin-top:18px; display:flex; gap:10px;">
+        <button id="validateConfirmBtn" class="btn-primary" style="flex:1;">✅ Confirmer et envoyer</button>
+      </div>
+      <p id="validateMsg" style="margin-top:12px; font-size:0.85rem; color:var(--sage); display:none;">Commande validée et transférée !</p>
+      <p style="margin-top:16px; text-align:center;"><a href="#" id="goToFullAdmin" style="color:var(--cocoa-light); font-size:0.85rem;">Voir toute l'administration</a></p>
+    </div>
+  </div>
+
   <div id="gate" class="gate">
     <p>Mot de passe admin</p>
     <input type="text" id="pwInput" placeholder="Mot de passe">
@@ -128,6 +147,7 @@
 const SUPABASE_URL = "https://tlkqcysrmkjhahhfjitu.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_RM91kJNsu1bJFU1IoPPxcQ_bLTxnLgZ";
 const ADMIN_PASSWORD = "we2320amse"; // mot de passe simple, pas une vraie sécurité
+const FINAL_DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1523321413862424678/kCwkNykGB7hcvwmOv0O8ZtemUFyWaWvvQoE8I4uG1TuLH8BdIIMp1M2ng5XayVPp5zl-";
 // ==================
 
 const headers = {
@@ -137,6 +157,95 @@ const headers = {
 };
 
 function fmt(n){ return Number(n).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; }
+
+const urlParams = new URLSearchParams(window.location.search);
+const validateOrderId = urlParams.get('validate');
+
+if(validateOrderId){
+  document.getElementById('gate').style.display = 'none';
+  document.getElementById('validateGate').style.display = 'block';
+} 
+
+document.getElementById('goToFullAdmin').addEventListener('click', (e) => {
+  e.preventDefault();
+  window.location.href = window.location.pathname;
+});
+
+document.getElementById('pwBtnValidate').addEventListener('click', async () => {
+  if(document.getElementById('pwInputValidate').value !== ADMIN_PASSWORD){
+    document.getElementById('pwErrorValidate').style.display = 'block';
+    return;
+  }
+  document.getElementById('validateGate').style.display = 'none';
+  document.getElementById('validateCard').style.display = 'block';
+  await loadValidateRecap();
+});
+
+async function loadValidateRecap(){
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/orders?id=eq.${validateOrderId}&select=*`, { headers });
+  const rows = await res.json();
+  const recapEl = document.getElementById('validateRecap');
+  if(rows.length === 0){
+    recapEl.innerHTML = '<p class="empty">Commande introuvable (déjà supprimée ?).</p>';
+    document.getElementById('validateConfirmBtn').style.display = 'none';
+    return;
+  }
+  const o = rows[0];
+  const itemsStr = o.items.map(it => `${it.name} ×${it.qty}`).join(', ');
+  const deliveryStr = o.delivery_mode === 'delivery' ? `Livraison — ${o.address || ''}` : 'À récupérer';
+  recapEl.innerHTML = `
+    <p><strong>${o.buyer_name}</strong> — ${o.email || ''}</p>
+    <p>${itemsStr}</p>
+    <p>${deliveryStr}</p>
+    ${o.promo_code ? `<p>Code : ${o.promo_code} (-${fmt(o.discount)})</p>` : ''}
+    <p><strong>Total : ${fmt(o.total)}</strong></p>
+    <p style="color:var(--cocoa-light); font-size:0.85rem;">Statut actuel : ${o.status === 'done' ? 'déjà validée' : 'en attente'}</p>
+  `;
+  document.getElementById('validateConfirmBtn').dataset.order = JSON.stringify(o);
+  if(o.status === 'done'){
+    document.getElementById('validateConfirmBtn').textContent = 'Renvoyer dans le salon final';
+  }
+}
+
+document.getElementById('validateConfirmBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('validateConfirmBtn');
+  const o = JSON.parse(btn.dataset.order || '{}');
+  if(!o.id) return;
+  btn.disabled = true;
+  btn.textContent = 'Envoi...';
+
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/orders?id=eq.${o.id}`, {
+      method: 'PATCH', headers, body: JSON.stringify({ status: 'done' })
+    });
+
+    const lines = o.items.map(it => `• ${it.name} ×${it.qty} — ${fmt(it.lineTotal)}`).join('\n');
+    const fields = [{ name: 'Total', value: fmt(o.total), inline: true }];
+    fields.push({ name: 'Récupération', value: o.delivery_mode === 'delivery' ? `Livraison — ${o.address}` : 'À récupérer', inline: true });
+    if(o.promo_code) fields.push({ name: 'Code promo', value: `${o.promo_code} (-${fmt(o.discount)})`, inline: true });
+
+    await fetch(FINAL_DISCORD_WEBHOOK_URL, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        embeds: [{
+          title: `✅ Commande validée — ${o.buyer_name}`,
+          description: lines,
+          fields,
+          color: 7259400,
+          timestamp: new Date().toISOString()
+        }]
+      })
+    });
+
+    document.getElementById('validateMsg').style.display = 'block';
+    btn.textContent = 'Renvoyer dans le salon final';
+  } catch(err){
+    alert("Une erreur est survenue.");
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 document.getElementById('pwBtn').addEventListener('click', () => {
   if(document.getElementById('pwInput').value === ADMIN_PASSWORD){
