@@ -151,6 +151,7 @@ const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/152332141386242467
 const EMAILJS_PUBLIC_KEY = "wPAUuIZWSlZ-ivT6G";
 const EMAILJS_SERVICE_ID = "service_t5vkog6";
 const EMAILJS_TEMPLATE_ID = "template_eezjn0k";
+const SITE_URL = "https://wcookies78.github.io/Wcookies"; // sans slash à la fin
 // ==================
 
 emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
@@ -387,11 +388,12 @@ document.getElementById('promoBtn').addEventListener('click', async () => {
   renderReceipt();
 });
 
-async function notifyDiscord(order){
+async function notifyDiscord(order, orderId){
   const lines = order.items.map(it => `• ${it.name} ×${it.qty} — ${fmt(it.lineTotal)}`).join('\n');
   const fields = [{ name: 'Total', value: fmt(order.total), inline: true }];
   fields.push({ name: 'Récupération', value: order.delivery_mode === 'delivery' ? `Livraison — ${order.address}` : 'À récupérer', inline: true });
   if(order.discount > 0) fields.push({ name: 'Code promo', value: `${order.promo_code} (-${fmt(order.discount)} au total)`, inline: true });
+  fields.push({ name: '\u200b', value: `[✅ Cliquer ici pour valider cette commande](${SITE_URL}/admin.html?validate=${orderId})` });
   const payload = {
     embeds: [{
       title: `Nouvelle commande de ${order.buyer_name}`,
@@ -482,13 +484,15 @@ document.getElementById('modalConfirmBtn').addEventListener('click', async () =>
         apikey: SUPABASE_ANON_KEY,
         Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
         'Content-Type': 'application/json',
-        Prefer: 'return=minimal'
+        Prefer: 'return=representation'
       },
       body: JSON.stringify(order)
     });
     if(!res.ok) throw new Error('insert failed');
+    const inserted = await res.json();
+    const orderId = inserted[0].id;
 
-    await notifyDiscord(order);
+    await notifyDiscord(order, orderId);
     await sendConfirmationEmail(order);
 
     if(appliedPromo && appliedPromo.id && combinedDiscount > 0){
