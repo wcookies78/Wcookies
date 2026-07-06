@@ -20,8 +20,11 @@
   header{padding:2.5rem 0 1.5rem; text-align:center;}
   header h1{font-size:2.2rem;}
   header p{color:var(--cocoa-light); margin:0.5rem 0 0;}
-  .layout{display:grid; grid-template-columns:1.4fr 1fr; gap:32px; align-items:start;}
-  @media (max-width:760px){ .layout{grid-template-columns:1fr;} }
+  .layout{display:grid; grid-template-columns:0.85fr 1.4fr 1fr; gap:28px; align-items:start;}
+  @media (max-width:960px){ .layout{grid-template-columns:1fr;} }
+  .advice-panel{background:var(--paper); border:1px solid var(--cream-dark); border-radius:14px; padding:18px 20px; position:sticky; top:20px;}
+  .advice-panel h3{font-family:'Fraunces', serif; font-size:1rem; margin-bottom:8px;}
+  .advice-panel p{font-size:0.88rem; color:var(--cocoa-light); line-height:1.5; white-space:pre-wrap; margin:0;}
   .field-block{margin-bottom:1.5rem;}
   .field-block label{display:block; font-size:0.85rem; color:var(--cocoa-light); margin-bottom:6px; font-weight:500;}
   .field-block input[type=text]{width:100%; padding:12px 14px; border-radius:10px; border:1px solid var(--cream-dark); background:var(--paper); font-size:1rem; font-family:inherit; color:var(--cocoa);}
@@ -80,6 +83,20 @@
   .modal-actions .btn-confirm{background:var(--caramel); color:var(--paper); border:none;}
   .modal-actions .btn-confirm:hover{background:var(--caramel-dark);}
   .cooldown-msg{display:none; background:#FBEBD8; color:var(--caramel-dark); border:1px solid #F0D5AC; border-radius:10px; padding:12px 14px; margin-top:14px; font-size:0.88rem; text-align:center;}
+  .payment-choice{display:flex; gap:10px; margin-bottom:8px;}
+  .payment-choice label{flex:1; display:flex; align-items:center; gap:8px; padding:10px 12px; border:1px solid var(--cream-dark); border-radius:10px; background:var(--paper); font-size:0.9rem; cursor:pointer;}
+  .payment-choice input{margin:0;}
+  .paypal-warning{
+    background:#FDF2E9; border:2px solid var(--caramel); border-radius:12px;
+    padding:16px 18px; margin-top:16px; text-align:center;
+  }
+  .paypal-warning .big{font-size:1.3rem; margin-bottom:6px;}
+  .paypal-warning strong{color:var(--caramel-dark);}
+  .paypal-btn{
+    display:inline-block; margin-top:12px; padding:13px 22px; background:#003087; color:#fff;
+    border-radius:10px; text-decoration:none; font-weight:600; font-size:0.98rem;
+  }
+  .paypal-btn:hover{background:#002569;}
 </style>
 </head>
 <body>
@@ -92,6 +109,10 @@
   <div id="loadingMsg" class="loading">Chargement des produits…</div>
 
   <div id="orderView" class="layout" style="display:none;">
+    <div class="advice-panel">
+      <h3>💬 Le mot du jour</h3>
+      <p id="adviceText">—</p>
+    </div>
     <div>
       <div class="field-block">
         <label for="buyerName">Ton nom / pseudo</label>
@@ -108,6 +129,13 @@
           <label><input type="radio" name="deliveryMode" value="delivery"> Livraison</label>
         </div>
         <input type="text" id="addressInput" placeholder="Ton adresse de livraison" style="display:none;">
+      </div>
+      <div class="field-block">
+        <label>Paiement</label>
+        <div class="payment-choice">
+          <label><input type="radio" name="paymentMethod" value="cash" checked> Espèces</label>
+          <label><input type="radio" name="paymentMethod" value="paypal"> PayPal</label>
+        </div>
       </div>
       <div class="products" id="productsList"></div>
     </div>
@@ -127,6 +155,11 @@
       </div>
       <button class="submit-btn" id="submitBtn" disabled>Envoyer ma commande</button>
       <div class="confirm-msg" id="confirmMsg">Commande envoyée, merci ! 🎉 Vérifie ta boîte mail.</div>
+      <div id="paypalStep" style="display:none;" class="paypal-warning">
+        <div class="big">⚠️ <strong>Important avant de payer</strong></div>
+        <p>Sur PayPal, choisis bien l'option <strong>« Envoyer de l'argent à un ami / Amis et famille »</strong> et non « Biens et services ». C'est indispensable, sinon des frais supplémentaires s'appliquent.</p>
+        <a href="#" id="paypalLink" target="_blank" rel="noopener" class="paypal-btn">Payer sur PayPal</a>
+      </div>
       <div class="cooldown-msg" id="cooldownMsg">Une commande a déjà été envoyée récemment. Merci de patienter un peu avant d'en renvoyer une.</div>
     </div>
   </div>
@@ -148,10 +181,11 @@
 const SUPABASE_URL = "https://tlkqcysrmkjhahhfjitu.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_RM91kJNsu1bJFU1IoPPxcQ_bLTxnLgZ";
 const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1523321413862424678/kCwkNykGB7hcvwmOv0O8ZtemUFyWaWvvQoE8I4uG1TuLH8BdIIMp1M2ng5XayVPp5zl-";
-const EMAILJS_PUBLIC_KEY = "wPAUuIZWSlZ-ivT6G";
+const EMAILJS_PUBLIC_KEY = "TA_PUBLIC_KEY_EMAILJS";
 const EMAILJS_SERVICE_ID = "service_t5vkog6";
 const EMAILJS_TEMPLATE_ID = "template_eezjn0k";
 const SITE_URL = "https://wcookies78.github.io/Wcookies"; // sans slash à la fin
+const PAYPAL_USERNAME = "WCookies";
 // ==================
 
 emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
@@ -177,12 +211,18 @@ function cookieIcon(seed){
 
 async function loadSettings(){
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/settings?select=delivery_fee&limit=1`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/settings?select=delivery_fee,advice_text&limit=1`, {
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
     });
     if(res.ok){
       const rows = await res.json();
-      if(rows.length > 0) DELIVERY_FEE = Number(rows[0].delivery_fee);
+      if(rows.length > 0){
+        DELIVERY_FEE = Number(rows[0].delivery_fee);
+        const adviceEl = document.getElementById('adviceText');
+        adviceEl.textContent = rows[0].advice_text && rows[0].advice_text.trim()
+          ? rows[0].advice_text
+          : "Merci de commander sur WCookies 🍪";
+      }
     }
   } catch(err){ console.error('settings load failed', err); }
 }
@@ -392,6 +432,7 @@ async function notifyDiscord(order, orderId){
   const lines = order.items.map(it => `• ${it.name} ×${it.qty} — ${fmt(it.lineTotal)}`).join('\n');
   const fields = [{ name: 'Total', value: fmt(order.total), inline: true }];
   fields.push({ name: 'Récupération', value: order.delivery_mode === 'delivery' ? `Livraison — ${order.address}` : 'À récupérer', inline: true });
+  fields.push({ name: 'Paiement', value: order.payment_method === 'paypal' ? 'PayPal' : 'Espèces', inline: true });
   if(order.discount > 0) fields.push({ name: 'Code promo', value: `${order.promo_code} (-${fmt(order.discount)} au total)`, inline: true });
   fields.push({ name: '\u200b', value: `[✅ Cliquer ici pour valider cette commande](${SITE_URL}/admin.html?validate=${orderId})` });
   const payload = {
@@ -425,6 +466,8 @@ document.getElementById('submitBtn').addEventListener('click', () => {
   recap += `<p><strong>Total : ${fmt(total)}</strong></p>`;
 
   document.getElementById('modalRecap').innerHTML = recap;
+  document.getElementById('paypalStep').style.display = 'none';
+  document.getElementById('confirmMsg').style.display = 'none';
   document.getElementById('modalOverlay').classList.add('open');
 });
 
@@ -464,13 +507,15 @@ document.getElementById('modalConfirmBtn').addEventListener('click', async () =>
   if(deliveryMode === 'delivery' && !address) return;
 
   const combinedDiscount = discount + deliveryDiscount;
+  const paymentMethod = document.querySelector('input[name="paymentMethod"]:checked').value;
 
   const order = {
     buyer_name: name, email, items, subtotal, total, status: 'pending',
     delivery_mode: deliveryMode, address: deliveryMode === 'delivery' ? address : null,
     delivery_fee: deliveryFee,
     promo_code: appliedPromo ? appliedPromo.code : null,
-    discount: combinedDiscount
+    discount: combinedDiscount,
+    payment_method: paymentMethod
   };
 
   const confirmBtn = document.getElementById('modalConfirmBtn');
@@ -514,6 +559,15 @@ document.getElementById('modalConfirmBtn').addEventListener('click', async () =>
 
     document.getElementById('modalOverlay').classList.remove('open');
     document.getElementById('confirmMsg').style.display = 'block';
+
+    if(order.payment_method === 'paypal'){
+      document.getElementById('confirmMsg').textContent = 'Commande enregistrée ! Finalise ton paiement ci-dessous 👇';
+      document.getElementById('paypalLink').href = `https://paypal.me/${PAYPAL_USERNAME}/${order.total.toFixed(2)}`;
+      document.getElementById('paypalStep').style.display = 'block';
+    } else {
+      document.getElementById('confirmMsg').textContent = 'Commande envoyée, merci ! 🎉 Vérifie ta boîte mail.';
+    }
+
     PRODUCTS.forEach(p => { state[p.id] = 0; document.getElementById(`qty-${p.id}`).textContent = '0'; });
     document.getElementById('buyerName').value = '';
     document.getElementById('buyerEmail').value = '';
@@ -524,7 +578,9 @@ document.getElementById('modalConfirmBtn').addEventListener('click', async () =>
     document.querySelector('input[name="deliveryMode"][value="pickup"]').checked = true;
     document.getElementById('addressInput').style.display = 'none';
     renderReceipt();
-    setTimeout(() => { document.getElementById('confirmMsg').style.display = 'none'; }, 5000);
+    if(order.payment_method !== 'paypal'){
+      setTimeout(() => { document.getElementById('confirmMsg').style.display = 'none'; }, 5000);
+    }
     checkCooldownDisplay();
   } catch(err){
     alert("La commande n'a pas pu être envoyée, réessaie.");
